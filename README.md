@@ -163,3 +163,119 @@ src/
     subscriptions.rs
   startup.rs
 ```
+
+##### 3.8.5.2.2 Reading A Configuration File
+
+```rs
+// src/configuration.rs
+pub fn get_configuration() -> Result<Settings, config::ConfigError> {
+    let settings = config::Config::builder()
+        .add_source(config::File::new("configuration", config::FileFormat::Yaml))
+        .build()?;
+
+    settings.try_deserialize::<Settings>()
+}
+```
+
+### 3.9.2 actix-web Workers
+
+- web::Data wraps connection in `Atomic Reference Counted pointer`
+
+### 3.9.3 The Data Extractor
+
+- the `web::Data<T>` cast any value to the type `T` (equivalent to dependency injection)
+
+```rs
+// src/routes/subscriptions.rs
+pub async fn subscribe(
+    _form: web::Form<FormData>,
+    _connection: web::Data<PgConnection>,
+```
+
+### 3.9.4 The INSERT Query
+
+- replace PgConnection to PgPool for sharing mut ref
+
+```rs
+// src/main.rs
+let connection_pool = PgPool::connect(&configuration.database.connection_string())
+    .await
+    .expect("Failed to connect to Postgres.");
+..
+// src/startup.rs
+pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Error> {
+    let db_pool = web::Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+..
+// src/routes/subscriptions.rs
+pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
+    sqlx::query!(..)
+    .execute(pool.get_ref())
+    .await;
+```
+
+## 3.10 Updating Out Tests
+
+```rs
+async fn spawn_app() -> TestApp {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+    let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{}", port);
+
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
+
+    let server = run(listener, connection_pool.clone()).expect("Failed to bind address");
+    let _ = tokio::spawn(server);
+
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+```
+
+### 3.10.1 Test Isolation
+
+- Solutions
+
+1. wrap the whole test in a SQL transaction and rollback at the end of it
+   - no way to capture that connectino in a SQL tx context
+2. spin up a brand-new logical database for each integration test
+   - slower but easier
+   1. create a new logical db with a unique name
+   2. run db migrations on it.
+
+```rs
+// tests/health_check.rs
+configuration.database.database_name = uuid::Uuid::new_v4().to_string();
+let connection_pool = configure_database(&configuration.database).await;
+..
+async fn configure_database(config: &zero2prod::configuration::DatabaseSettings) -> PgPool {
+    let mut connection = PgConnection::connect(&config.connection_string_without_db())
+        .await
+        .expect("Failed to connect to Postgres.");
+
+    connection
+        .execute(format!(r#"CREATE DATABASE "{}";"#, config.database_name).as_str())
+        .await
+        .expect("Failed to create database.");
+
+    let connection_pool = PgPool::connect(&config.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
+
+    sqlx::migrate!("./migrations")
+        .run(&connection_pool)
+        .await
+        .expect("Failed to migrate the database.");
+
+    connection_pool
+}
+```

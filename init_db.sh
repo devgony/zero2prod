@@ -3,7 +3,7 @@ set -x
 set -eo pipefail
 
 DB_HOST=8.tcp.ngrok.io
-DB_USER=${POSTGRES_USER:=postgres}
+DB_USER="${POSTGRES_USER:=postgres}"
 DB_PASSWORD="${POSTGRES_PASSWORD:=password}"
 DB_NAME="${POSTGRES_DB:=newsletter}"
 DB_PORT=17705
