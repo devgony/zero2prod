@@ -279,3 +279,88 @@ async fn configure_database(config: &zero2prod::configuration::DatabaseSettings)
     connection_pool
 }
 ```
+
+# 4. Telemetry
+
+## 4.1. Unknown Unknowns
+
+### Known unknowns
+
+- what happens if we lose connection to the database?
+  - Does sqlx::PgPool try to automatically recover?
+- what happens if an attacker tries to pass malicious payloads in the body of the POST like large payloads or SQL injection
+
+### Unknown unknowns
+
+- Sometimes experience is enough to transform an unknown unknown into a known unknown
+- impossible to reproduce outside of live environment
+  - the system is pushed outside of its usual operating conditions
+  - multiple components experience failures at the same time
+  - a change is introduced that moves the system equilibrium(e.g. tuning a retry policy)
+  - no changes have been introduced for a long time (e.g. app have not been restarted for weeks and memory leaks)
+
+## 4.2. Observability
+
+- Observability is about being able to ask arbitrary questions about your environment `without having to know ahead of time what you wanted to ask`
+
+### To build an observable system
+
+- instrument our app to collect high-quality telemetry data
+- access to tools and systems to efficiently slice, dice and manipulate the data to find answers to our questions
+
+## 4.3. Logging
+
+### 4.3.1. The log Crate
+
+1. trace: lowest level, extremely verbose
+2. debug
+3. info
+4. warn
+5. error: serious failures that might have user impact
+
+```rs
+fn fallible_operation() -> Result<String, String> { ... }
+
+pub fn main() {
+  match fallible_operation() {
+    Ok(success) => {
+      log::info!("Operation succeeded: {}", success);
+    }
+    Err(err) => {
+      log::error!("Operation failed: {}", err);
+    }
+  }
+}
+```
+
+### 4.3.2. actix-web's Logger Middleware
+
+```rs
+// src/routes/startup.rs
+let server = HttpServer::new(move || {
+    App::new()
+        .wrap(Logger::default())
+..
+```
+
+### 4.3.3. The Facade Pattern
+
+- global decision app are uniquely positioned to do
+- file, print, send to remote over HTTP(e.g. ElasticSearch)
+- should call `set_logger` to use log records
+- `env_logger` to print all log records to terminal
+  - format: `[<timestamp> <level> <module path>] <log message>`
+
+```toml
+# Cargo.toml
+[dependencies]
+env_logger = "0.9"
+```
+
+```rs
+// src/main.rs
+async fn main() -> std::io::Result<()> {
+// `init` does call `set_logger`, so this is all we need to do.
+// We are falling back to printing all logs at info-level or above
+// if the RUST_LOG environment variable has not been set. env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+```
