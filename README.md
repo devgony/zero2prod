@@ -345,9 +345,19 @@ let server = HttpServer::new(move || {
 
 ### 4.3.3. The Facade Pattern
 
-- global decision app are uniquely positioned to do
-- file, print, send to remote over HTTP(e.g. ElasticSearch)
-- should call `set_logger` to use log records
+- global decision that app are uniquely positioned to do => `log` crate
+  - file, print, send to remote over HTTP(e.g. ElasticSearch)
+  - it provides Log trait instead of how to record log
+
+```rs
+pub trait Log: Sync + Sned {
+  fn enabled(&self, metadata: &Metadata) -> bool;
+  fn log(&self, record: &Record);
+  fn flush(&self);
+}
+```
+
+- should call `set_logger` at main to use log records => use `env_logger`
 - `env_logger` to print all log records to terminal
   - format: `[<timestamp> <level> <module path>] <log message>`
 
@@ -362,5 +372,77 @@ env_logger = "0.9"
 async fn main() -> std::io::Result<()> {
 // `init` does call `set_logger`, so this is all we need to do.
 // We are falling back to printing all logs at info-level or above
-// if the RUST_LOG environment variable has not been set. env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+// if the RUST_LOG environment variable has not been set.
+env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
 ```
+
+- print trace-level logs (default: RUST_LOG=info)
+
+```sh
+RUST_LOG=trace cargo run
+```
+
+## 4.4 Instrumenting POST /subscriptions
+
+- add log as a dependency
+
+```toml
+#! Cargo.toml
+[dependencies]
+log = "0.4"
+```
+
+### 4.4.1 Interactions With External Systems
+
+- success => log::info!()
+- failure => log::error!()
+
+### 4.4.2 Think Like A User
+
+- make it observable like customer is reporting by email
+- our log should include id (email) info
+
+### 4.4.3 Log Mus Be Easy To Correlate
+
+- add UUID to each log::info!
+
+## 4.5 Structured Logging
+
+### what should not do
+
+- rewrite all upstream components in the req processing pipeline
+- change the sign of all downstream fn.s calling from subscribe handler
+
+### what should do
+
+- each sub-routines has
+  - duration
+  - context
+
+### then
+
+- trying to represent tree-like processing pipeline
+- Logs are the wrong abstraction
+
+### 4.5.1 The `tracing` Crate
+
+- expand upon logging-style diag with additional info
+
+### 4.5.2 Migrating From `log` To `tracing`
+
+### 4.5.3 `tracing`'s Span
+
+```rs
+let request_span = tracing::info_span!(
+    "Adding a new subscriber",
+    %request_id,
+    subscriber_email = %form.email,
+    subscriber_name = %form.name
+);
+let _request_span_guard = request_span.enter();
+```
+
+- info_span! gets multiple arguments => structured info
+- `%` prefix: implement `Display` for logging
+- `.enter()`: as long not dropped, all downstream spans and log events will be registered as children
+  - like Rust' RAII(Resource Acquisition Is Initialization)
