@@ -446,3 +446,98 @@ let _request_span_guard = request_span.enter();
 - `%` prefix: implement `Display` for logging
 - `.enter()`: as long not dropped, all downstream spans and log events will be registered as children
   - like Rust' RAII(Resource Acquisition Is Initialization)
+- tracing sign
+  - `->`: enter the span
+  - `<-`: exit the span
+  - `--`: close the span
+
+### 4.5.4 Instrumenting Futures
+
+```rs
+//! src/routes/subscriptions.rs
+use tracing::Instrument;
+// ..
+
+let query_span = tracing::info_span!("Saving new subscriber details in the database");
+match sqlx::query!(/* */)
+.execute(pool.get_ref())
+.instrument(query_span)
+.await
+```
+
+- `RUST_LOG=trace cargo run`
+- `+` `curl -i -X POST -d 'email=test@hotmail.com&name=tester' http://127.0.0.1:8000/subscriptions`
+
+```
+[2023-03-21T13:36:51Z TRACE tracing::span::active] -> Saving new subscriber details in the database;
+[2023-03-21T13:36:51Z INFO  sqlx::query] INSERT INTO subscriptions (id, …; rows affected: 1, rows returned: 0, elapsed: 747.553ms
+
+    INSERT INTO
+      subscriptions (id, email, name, subscribed_at)
+    VALUES
+      ($1, $2, $3, $4)
+
+[2023-03-21T13:36:51Z TRACE tracing::span::active] <- Saving new subscriber details in the database;
+[2023-03-21T13:36:51Z TRACE tracing::span] -- Saving new subscriber details in the database;
+[2023-03-21T13:36:51Z TRACE tracing::span::active] <- Adding a new subscriber;
+[2023-03-21T13:36:51Z TRACE tracing::span] -- Adding a new subscriber;
+```
+
+### 4.5.6 tracing-subscriber
+
+- env_logger -> tracing-subscriber
+
+```toml
+# Cargo.toml
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+```
+
+- Layer: build a processing pipeline for spans data
+- Registry: collects and stores span data exposed to any layer wrapping it
+
+### 4.5.7 tracing-bunyan-formatter
+
+- tracing_subscriber::filter::EnvFilter -> discards spans based on log levels
+- tracing_bunyan_formatter::JsonStorageLayer -> processes spans data and stores the associated metadata in JSON; propagate context from parent to children
+- tracing_bunyan_formatter::BunyanFormatterLayer -> builds on top of JsonStorageLayer and outputs log records in bunyan-compatible JSON format
+
+```toml
+# Cargo.toml
+tracing-bunyan-formatter = "0.3"
+```
+
+- it provides duration: `elapsed_millisecond`
+
+```rs
+//! src/main.rs
+let env_filter = EnvFilter::try_from_default_env().unwrap_or(EnvFilter::new("info"));
+let formatting_layer = BunyanFormattingLayer::new("zero2prod".into(), std::io::stdout);
+let subscriber = Registry::default()
+    .with(env_filter)
+    .with(JsonStorageLayer)
+    .with(formatting_layer);
+set_global_default(subscriber).expect("Failed to set subscriber.");
+```
+
+### 4.5.8 tracing-log
+
+- record every time a tracing event happens
+
+```toml
+# Cargo.toml
+tracing-log = "0.1"
+```
+
+```rs
+//! src/main.rs
+LogTracer::init().expect("Failed to set logger.");
+```
+
+### 4.5.9 Removing Unused Dependencies
+
+- cargo-udeps (Unused Dependencies) automatically remove redundant crates
+
+```
+cargo install cargo-udeps
+cargo +nightly udeps
+```
