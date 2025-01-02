@@ -10,7 +10,7 @@
 
 - good for testing private structs
 
-2. external tests foler
+2. external tests folder
 
 - good for integration test at identical level of using crate
 
